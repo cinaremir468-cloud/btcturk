@@ -1,5 +1,5 @@
-// server.js - BtcTurk & OKX Arbitraj + 7/24 İSTATİSTİK KAYDI
-// ⚡⚡⚡ GERÇEK MAKSİMUM HIZ - EVENT-DRIVEN ARBİTRAJ
+// server.js - BtcTurk Arbitraj + OKX Global Entegrasyonu + 7/24 İSTATİSTİK KAYDI
+// ⚡⚡⚡ GERÇEK MAKSİMUM HIZ - EVENT-DRIVEN ARBİTRAJ (OKX EDITION)
 const express = require('express');
 const cors = require('cors');
 const WebSocket = require('ws');
@@ -9,7 +9,7 @@ const fs = require('fs');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-console.log('🚀 ⚡⚡⚡ GERÇEK MAKSİMUM HIZ MODU Başlatılıyor... PORT:', PORT);
+console.log('🚀 ⚡⚡⚡ OKX GLOBAL MODU Başlatılıyor... PORT:', PORT);
 
 // CORS - EN ÖNCE OLMALI
 app.use(cors());
@@ -53,28 +53,24 @@ let wsMessageCount = 0;
 let wsLastMessageTime = 0;
 let arbitrageCheckCount = 0;
 
-// ===== YAPILANDIRMA - GERÇEK MAKSİMUM HIZ =====
+// ===== YAPILANDIRMA - OKX GLOBAL =====
 let CONFIG = {
   symbols: ['ACM', 'ASR', 'ATM', 'BAR', 'CITY', 'JUV', 'LUNA', 'PSG'],
   minPct: 0.4,
-  checkInterval: 10  // ⚡⚡⚡ 10ms - SADECE YEDEK (asıl kontrol event-driven)
+  checkInterval: 50  // OKX API limitlerine uygun olarak 50ms olarak optimize edildi
 };
 
-const OKX_CACHE_TIME = 200; // ⚡ OKX cache 200ms
+const OKX_CACHE_TIME = 200; // OKX fiyat cache süresi
 
 let usdtTry = 0;
 let usdtLastFetch = 0;
-let okxPrices = {};
+let okxPrices = {}; // Binance yerine OKX fiyatları
 let okxLastFetch = 0;
 let lastCheck = 0;
 
 // ===== HELPER FUNCTIONS =====
 function convertToBtcTurkSymbol(sym) {
   return sym.toUpperCase().replace('_TL', 'TRY').replace('_', '');
-}
-
-function convertToParibuSymbol(sym) {
-  return sym.toLowerCase().replace('try', '_tl');
 }
 
 function calculateDepth(market, bids, asks) {
@@ -93,7 +89,7 @@ function calculateDepth(market, bids, asks) {
   });
 }
 
-// ===== ⚡⚡⚡ GERÇEK MAKSİMUM HIZ WEBSOCKET BAĞLANTISI =====
+// ===== ⚡⚡⚡ BTCTURK WEBSOCKET BAĞLANTISI =====
 let wsReconnectTimer = null;
 let wsReconnectAttempts = 0;
 let wsPingInterval = null;
@@ -101,10 +97,9 @@ let wsPingInterval = null;
 function connectWebSocket() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
 
-  console.log('🔌 ⚡⚡⚡ GERÇEK MAKSİMUM HIZ: BtcTurk WebSocket bağlanıyor... (Deneme:', wsReconnectAttempts + 1, ')');
+  console.log('🔌 BtcTurk WebSocket bağlanıyor... (Deneme:', wsReconnectAttempts + 1, ')');
   
   try {
-    // Eski bağlantıyı temizle
     if (ws) {
       try { ws.terminate(); } catch(e) {}
       ws = null;
@@ -114,10 +109,8 @@ function connectWebSocket() {
       wsPingInterval = null;
     }
     
-    // ⚡⚡⚡ wss://ws-feed-pro.btcturk.com - PRO endpoint
     ws = new WebSocket('wss://ws-feed-pro.btcturk.com');
     
-    // Timeout 5 saniye
     const connectTimeout = setTimeout(() => {
       if (ws && ws.readyState !== WebSocket.OPEN) {
         console.log('⏱️ WebSocket bağlantı timeout (5sn)');
@@ -133,13 +126,11 @@ function connectWebSocket() {
       wsConnected = true;
       wsReconnectAttempts = 0;
       wsMessageCount = 0;
-      console.log('✅ ⚡⚡⚡ GERÇEK MAKSİMUM HIZ: BtcTurk WebSocket bağlandı!');
+      console.log('✅ BtcTurk WebSocket bağlandı!');
       
-      // USDT ve sembollere HEMEN abone ol
       subscribeToMarket('USDTTRY');
       CONFIG.symbols.forEach(sym => subscribeToMarket(`${sym}TRY`));
       
-      // Ping her 15 saniyede
       wsPingInterval = setInterval(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
           try { ws.ping(); } catch(e) {}
@@ -147,7 +138,6 @@ function connectWebSocket() {
       }, 15000);
     });
 
-    // ⚡⚡⚡ GERÇEK MAKSİMUM HIZ: Her mesajda ANINDA arbitraj kontrolü
     ws.on('message', (data) => {
       try {
         const now = Date.now();
@@ -160,9 +150,7 @@ function connectWebSocket() {
         const [type, payload] = msg;
         let dataUpdated = false;
         
-        // ⚡⚡⚡ 422 (snapshot), 431 (full orderbook), 432 (delta) - TÜM TİPLERİ İŞLE
         if ((type === 422 || type === 431) && payload && payload.PS) {
-          // Tam orderbook snapshot
           const market = payload.PS;
           const bids = (payload.BO || []).map(o => Array.isArray(o) ? [o[0], o[1]] : [o.P, o.A])
             .sort((a, b) => parseFloat(b[0]) - parseFloat(a[0])).slice(0, 20);
@@ -175,7 +163,6 @@ function connectWebSocket() {
         }
         
         if (type === 432 && payload && payload.PS) {
-          // Delta güncelleme - ANLIK işle
           const market = payload.PS;
           const existing = streamCache.get(market) || { bids: [], asks: [], timestamp: 0 };
           
@@ -205,7 +192,6 @@ function connectWebSocket() {
           dataUpdated = true;
         }
         
-        // ⚡⚡⚡ GERÇEK MAKSİMUM HIZ: Veri güncellendiğinde ANINDA arbitraj kontrolü!
         if (dataUpdated) {
           checkArbitrageInstant();
         }
@@ -213,7 +199,7 @@ function connectWebSocket() {
       } catch (e) {}
     });
 
-    ws.on('close', (code, reason) => {
+    ws.on('close', (code) => {
       wsConnected = false;
       if (wsPingInterval) { clearInterval(wsPingInterval); wsPingInterval = null; }
       console.log('🔴 WebSocket kapandı. Kod:', code);
@@ -225,10 +211,6 @@ function connectWebSocket() {
       wsConnected = false;
     });
     
-    ws.on('pong', () => {
-      wsLastMessageTime = Date.now();
-    });
-    
   } catch (err) {
     console.error('❌ WS Create Error:', err.message);
     wsConnected = false;
@@ -238,28 +220,16 @@ function connectWebSocket() {
 
 function scheduleReconnect() {
   if (wsReconnectTimer) return;
-  
   wsReconnectAttempts++;
   const delay = Math.min(1000 * Math.pow(1.5, wsReconnectAttempts - 1), 10000);
-  
-  console.log(`🔄 ⚡ ${(delay/1000).toFixed(1)}sn sonra yeniden bağlanılacak...`);
-  
   wsReconnectTimer = setTimeout(() => {
     wsReconnectTimer = null;
     connectWebSocket();
   }, delay);
 }
 
-// Her 15 saniyede bağlantı kontrolü
 setInterval(() => {
   if (!wsConnected || !ws || ws.readyState !== WebSocket.OPEN) {
-    console.log('⚠️ ⚡ WebSocket kopuk, HEMEN yeniden bağlanıyor...');
-    if (ws) {
-      try { ws.terminate(); } catch(e) {}
-      ws = null;
-    }
-    if (wsPingInterval) { clearInterval(wsPingInterval); wsPingInterval = null; }
-    wsConnected = false;
     connectWebSocket();
   }
 }, 15000);
@@ -267,39 +237,36 @@ setInterval(() => {
 function subscribeToMarket(market) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return false;
   if (subscribedChannels.has(market)) return true;
-
   try {
     ws.send(JSON.stringify([151, { type: 151, channel: "orderbook", event: market, join: true }]));
     subscribedChannels.add(market);
-    console.log(`📡 ⚡ ${market} abone olundu`);
+    console.log(`📡 ${market} abone olundu`);
     return true;
   } catch (e) { return false; }
 }
 
-// ===== OKX FİYATLARI =====
+// ===== OKX FİYATLARI (V5 API) =====
 async function fetchOkxPrices() {
-  if (Date.now() - okxLastFetch < OKX_CACHE_TIME) {
-    return;
-  }
+  if (Date.now() - okxLastFetch < OKX_CACHE_TIME) return;
   
   try {
-    // OKX toplu ticker endpoint
-    const requests = CONFIG.symbols.map(s =>
-      fetch(`https://www.okx.com/api/v5/market/ticker?instId=${s}-USDT`)
-        .then(r => r.json())
-        .then(data => {
-          if (data.data && data.data.length > 0) {
-            const item = data.data[0];
-            okxPrices[s] = {
-              bid: parseFloat(item.bidPx),
-              ask: parseFloat(item.askPx)
-            };
-          }
-        })
-        .catch(() => {})
-    );
-    await Promise.all(requests);
-    okxLastFetch = Date.now();
+    // OKX V5 Tickers Endpoint
+    const res = await fetch('https://www.okx.com/api/v5/market/tickers?instType=SPOT');
+    const data = await res.json();
+    
+    if (data && data.data) {
+      data.data.forEach(item => {
+        // OKX formatı: "BTC-USDT"
+        if (item.instId.endsWith('-USDT')) {
+          const sym = item.instId.replace('-USDT', '');
+          okxPrices[sym] = {
+            bid: parseFloat(item.bidPx),
+            ask: parseFloat(item.askPx)
+          };
+        }
+      });
+      okxLastFetch = Date.now();
+    }
   } catch (e) {
     console.error('OKX hatası:', e.message);
   }
@@ -335,26 +302,26 @@ function checkArbitrageInstant() {
     CONFIG.symbols.forEach(sym => {
       const btcturkMarket = `${sym}TRY`;
       const cached = streamCache.get(btcturkMarket);
-      const binance = okxPrices[sym];
+      const okx = okxPrices[sym];
       
       if (!cached || !cached.bids || cached.bids.length === 0) return;
-      if (!binance) return;
+      if (!okx) return;
       
       const pBid = parseFloat(cached.bids[0][0]);
       const pAsk = parseFloat(cached.asks[0][0]);
       const pBidQty = parseFloat(cached.bids[0][1]);
       const pAskQty = parseFloat(cached.asks[0][1]);
       
-      const bBidTL = binance.bid * usdt;
-      const bAskTL = binance.ask * usdt;
+      const oBidTL = okx.bid * usdt;
+      const oAskTL = okx.ask * usdt;
       
-      const diff1 = pBid - bAskTL;
-      const diff2 = bBidTL - pAsk;
+      const diff1 = pBid - oAskTL;
+      const diff2 = oBidTL - pAsk;
       
       let pct = 0, direction = '', qty = 0, value = 0;
       
       if (diff1 > diff2 && diff1 > 0) {
-        pct = (diff1 / bAskTL) * 100;
+        pct = (diff1 / oAskTL) * 100;
         direction = 'sell';
         qty = pBidQty;
         value = pBid * pBidQty;
@@ -372,7 +339,7 @@ function checkArbitrageInstant() {
           activeSignals.set(sym, {
             sym, direction, startTime: now, startPct: pct, maxPct: pct, qty, value
           });
-          console.log(`📈 ⚡ [${sym}] ${direction === 'sell' ? 'SAT' : 'AL'} %${pct.toFixed(2)} | ${qty.toFixed(2)} adet | ${value.toFixed(0)} TL`);
+          console.log(`📈 ⚡ OKX ⇄ BTCTURK [${sym}] ${direction === 'sell' ? 'SATIŞ' : 'ALIŞ'} %${pct.toFixed(2)} | ${qty.toFixed(2)} adet`);
         } else {
           const signal = activeSignals.get(sym);
           if (pct > signal.maxPct) {
@@ -433,8 +400,7 @@ function checkArbitrageInstant() {
           stats.maxPctTime = signal.startTime;
         }
         
-        console.log(`✅ ⚡ [${sym}] Kapandı: %${signal.maxPct.toFixed(2)} | ${duration.toFixed(1)}sn | Toplam: ${stats.totalSignals}`);
-        
+        console.log(`✅ [${sym}] Bitti: %${signal.maxPct.toFixed(2)} | Süre: ${duration.toFixed(1)}sn`);
         activeSignals.delete(sym);
       }
     }
@@ -451,96 +417,15 @@ async function checkArbitrage() {
   checkArbitrageInstant();
 }
 
-// ===== INDEX.HTML =====
-let indexHtml = '<h1>Loading...</h1>';
-let statsHtml = '<h1>Loading...</h1>';
-try {
-  const indexPath = path.join(__dirname, 'index.html');
-  if (fs.existsSync(indexPath)) {
-    indexHtml = fs.readFileSync(indexPath, 'utf8');
-    console.log('✅ index.html yüklendi');
-  }
-  const statsPath = path.join(__dirname, 'stats.html');
-  if (fs.existsSync(statsPath)) {
-    statsHtml = fs.readFileSync(statsPath, 'utf8');
-    console.log('✅ stats.html yüklendi');
-  }
-} catch (e) {}
-
+// ===== API ENDPOINTS =====
 app.get('/', (req, res) => {
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(indexHtml);
+  res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 app.get('/stats', (req, res) => {
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(statsHtml);
+  res.sendFile(path.join(__dirname, 'stats.html'));
 });
 
-// ===== API ENDPOINTS =====
-app.get('/api/btcturk/orderbook', async (req, res) => {
-  const { market } = req.query;
-  if (!market) return res.status(400).json({ error: 'market gerekli' });
-  const btcturkMarket = market.includes('_') ? convertToBtcTurkSymbol(market) : market.toUpperCase();
-  subscribeToMarket(btcturkMarket);
-  const cached = streamCache.get(btcturkMarket);
-  res.json(cached ? { bids: cached.bids, asks: cached.asks } : { bids: [], asks: [] });
-});
-
-app.get('/api/paribu/orderbook', async (req, res) => {
-  const { market } = req.query;
-  if (!market) return res.status(400).json({ error: 'market gerekli' });
-  const btcturkMarket = market.includes('_') ? convertToBtcTurkSymbol(market) : market.toUpperCase();
-  subscribeToMarket(btcturkMarket);
-  const cached = streamCache.get(btcturkMarket);
-  res.json(cached ? { bids: cached.bids, asks: cached.asks } : { bids: [], asks: [] });
-});
-
-app.post('/api/btcturk/batch', async (req, res) => {
-  const { markets } = req.body;
-  if (!Array.isArray(markets)) return res.status(400).json({ error: 'markets array gerekli' });
-
-  markets.forEach(m => {
-    const btcturkMarket = m.includes('_') ? convertToBtcTurkSymbol(m) : m.toUpperCase();
-    subscribeToMarket(btcturkMarket);
-  });
-
-  const results = markets.map(market => {
-    const btcturkMarket = market.includes('_') ? convertToBtcTurkSymbol(market) : market.toUpperCase();
-    const cached = streamCache.get(btcturkMarket);
-    const depth = depthCache.get(btcturkMarket);
-    if (cached && cached.bids && cached.bids.length > 0) {
-      return { market, success: true, data: { bids: cached.bids, asks: cached.asks }, depth, cached: true };
-    }
-    return { market, success: false, error: 'Veri yok' };
-  });
-
-  res.json({ success: true, results });
-});
-
-app.post('/api/paribu/batch', async (req, res) => {
-  const { markets } = req.body;
-  if (!Array.isArray(markets)) return res.status(400).json({ error: 'markets array gerekli' });
-
-  markets.forEach(m => {
-    const btcturkMarket = m.includes('_') ? convertToBtcTurkSymbol(m) : m.toUpperCase();
-    subscribeToMarket(btcturkMarket);
-  });
-
-  const results = markets.map(market => {
-    const btcturkMarket = market.includes('_') ? convertToBtcTurkSymbol(market) : market.toUpperCase();
-    const cached = streamCache.get(btcturkMarket);
-    const depth = depthCache.get(btcturkMarket);
-    if (cached && cached.bids && cached.bids.length > 0) {
-      return { market, success: true, data: { bids: cached.bids, asks: cached.asks }, depth, cached: true };
-    }
-    return { market, success: false, error: 'Veri yok' };
-  });
-
-  res.json({ success: true, results });
-});
-
-// ===== İSTATİSTİK API =====
 app.get('/api/stats', (req, res) => {
   const uptime = Math.floor((Date.now() - stats.startTime) / 1000);
   const checksPerSec = uptime > 0 ? (arbitrageCheckCount / uptime).toFixed(1) : 0;
@@ -553,7 +438,6 @@ app.get('/api/stats', (req, res) => {
     wsConnected,
     usdtTry,
     lastCheck,
-    // ⚡⚡⚡ GERÇEK MAKSİMUM HIZ: Performans metrikleri
     wsMessageCount,
     wsLastMessageTime,
     arbitrageCheckCount,
@@ -562,92 +446,72 @@ app.get('/api/stats', (req, res) => {
   });
 });
 
+app.post('/api/btcturk/batch', async (req, res) => {
+  const { markets } = req.body;
+  if (!Array.isArray(markets)) return res.status(400).json({ error: 'markets array gerekli' });
+
+  markets.forEach(m => {
+    const btcturkMarket = m.toUpperCase();
+    subscribeToMarket(btcturkMarket);
+  });
+
+  const results = markets.map(market => {
+    const btcturkMarket = market.toUpperCase();
+    const cached = streamCache.get(btcturkMarket);
+    const depth = depthCache.get(btcturkMarket);
+    if (cached && cached.bids && cached.bids.length > 0) {
+      return { market, success: true, data: { bids: cached.bids, asks: cached.asks }, depth, cached: true };
+    }
+    return { market, success: false, error: 'Veri yok' };
+  });
+
+  res.json({ success: true, results });
+});
+
 app.get('/api/stats/signals', (req, res) => {
   const { limit = 100, sym, day } = req.query;
   let filtered = allSignals;
-  
   if (sym) filtered = filtered.filter(s => s.sym === sym.toUpperCase());
   if (day) filtered = filtered.filter(s => s.day === day);
-  
   res.json({
     total: filtered.length,
     signals: filtered.slice(-parseInt(limit)).reverse()
   });
 });
 
-app.get('/api/stats/daily', (req, res) => {
-  res.json(stats.daily);
-});
-
-app.get('/api/stats/hourly', (req, res) => {
-  const hours = Object.entries(stats.hourly)
-    .sort((a, b) => b[0].localeCompare(a[0]))
-    .slice(0, 24);
-  res.json(Object.fromEntries(hours));
-});
-
-app.get('/api/stats/symbols', (req, res) => {
-  res.json(stats.bySymbol);
-});
-
 app.get('/api/stats/export', (req, res) => {
-  res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Content-Disposition', `attachment; filename=arbitraj-stats-${new Date().toISOString().slice(0,10)}.json`);
-  res.json({
-    exportTime: new Date().toISOString(),
-    stats,
-    signals: allSignals
-  });
+  res.json({ exportTime: new Date().toISOString(), stats, signals: allSignals });
 });
 
-// ===== CONFIG API =====
-app.get('/api/config', (req, res) => {
-  res.json(CONFIG);
-});
+app.get('/api/config', (req, res) => res.json(CONFIG));
 
 app.post('/api/config', (req, res) => {
   const { symbols, minPct, checkInterval } = req.body;
-  if (symbols) CONFIG.symbols = symbols;
-  if (minPct !== undefined) CONFIG.minPct = parseFloat(minPct);
-  if (checkInterval) CONFIG.checkInterval = parseInt(checkInterval);
-  
   if (symbols) {
+    CONFIG.symbols = symbols;
     symbols.forEach(sym => subscribeToMarket(`${sym}TRY`));
   }
-  
-  console.log('⚙️ Config güncellendi:', CONFIG);
+  if (minPct !== undefined) CONFIG.minPct = parseFloat(minPct);
+  if (checkInterval) CONFIG.checkInterval = parseInt(checkInterval);
   res.json({ success: true, config: CONFIG });
 });
 
-// 404
-app.use((req, res) => res.status(404).json({ error: 'Not found' }));
-
 // ===== START =====
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log('✅ ⚡⚡⚡ GERÇEK MAKSİMUM HIZ Server dinliyor - Port:', PORT);
-  
-  // WebSocket bağlan
+  console.log('✅ OKX Arbitraj Server dinliyor - Port:', PORT);
   connectWebSocket();
-  
-  // ⚡⚡⚡ OKX güncelleme için yedek kontrol (10ms)
   setInterval(checkArbitrage, CONFIG.checkInterval);
-  
-  console.log('📊 7/24 istatistik kaydı aktif!');
-  console.log(`📋 Semboller: ${CONFIG.symbols.join(', ')}`);
-  console.log(`📉 Min %: ${CONFIG.minPct}`);
-  console.log(`⚡⚡⚡ MOD: EVENT-DRIVEN (Her WS mesajında anında kontrol!)`);
+  console.log(`📋 İzlenen Semboller: ${CONFIG.symbols.join(', ')}`);
 });
 
 server.on('error', (err) => console.error('❌ Server Error:', err.message));
 process.on('uncaughtException', (err) => console.error('⚠️ Exception:', err.message));
 process.on('unhandledRejection', (reason) => console.error('⚠️ Rejection:', reason));
 
-// Heartbeat
+// Heartbeat log
 setInterval(() => {
   const now = new Date().toLocaleTimeString('tr-TR');
-  const mem = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1);
   const uptime = (Date.now() - stats.startTime) / 1000;
   const checksPerSec = uptime > 0 ? (arbitrageCheckCount / uptime).toFixed(1) : 0;
-  const msgPerSec = uptime > 0 ? (wsMessageCount / uptime).toFixed(1) : 0;
-  console.log(`[${now}] ⚡⚡⚡ Sinyal: ${stats.totalSignals} | Aktif: ${activeSignals.size} | WS: ${wsConnected ? '✅' : '❌'} | Check/sn: ${checksPerSec} | Msg/sn: ${msgPerSec} | RAM: ${mem}MB`);
-}, 30000);
+  console.log(`[${now}] ⚡ Sinyal: ${stats.totalSignals} | Aktif: ${activeSignals.size} | WS: ${wsConnected ? '✅' : '❌'} | Check/sn: ${checksPerSec}`);
+}, 60000);
