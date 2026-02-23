@@ -1,4 +1,4 @@
-// server.js - BtcTurk Arbitraj + 7/24 İSTATİSTİK KAYDI
+// server.js - BtcTurk & OKX Arbitraj + 7/24 İSTATİSTİK KAYDI
 // ⚡⚡⚡ GERÇEK MAKSİMUM HIZ - EVENT-DRIVEN ARBİTRAJ
 const express = require('express');
 const cors = require('cors');
@@ -60,12 +60,12 @@ let CONFIG = {
   checkInterval: 10  // ⚡⚡⚡ 10ms - SADECE YEDEK (asıl kontrol event-driven)
 };
 
-const BINANCE_CACHE_TIME = 200; // ⚡ Binance cache 200ms'e düşürüldü
+const OKX_CACHE_TIME = 200; // ⚡ OKX cache 200ms
 
 let usdtTry = 0;
 let usdtLastFetch = 0;
-let binancePrices = {};
-let binanceLastFetch = 0;
+let okxPrices = {};
+let okxLastFetch = 0;
 let lastCheck = 0;
 
 // ===== HELPER FUNCTIONS =====
@@ -276,28 +276,32 @@ function subscribeToMarket(market) {
   } catch (e) { return false; }
 }
 
-// ===== BINANCE FİYATLARI (DEĞİŞMEDİ) =====
-async function fetchBinancePrices() {
-  if (Date.now() - binanceLastFetch < BINANCE_CACHE_TIME) {
+// ===== OKX FİYATLARI =====
+async function fetchOkxPrices() {
+  if (Date.now() - okxLastFetch < OKX_CACHE_TIME) {
     return;
   }
   
   try {
-    const symbols = CONFIG.symbols.map(s => `"${s}USDT"`).join(',');
-    const url = `https://api.binance.com/api/v3/ticker/bookTicker?symbols=[${symbols}]`;
-    const res = await fetch(url);
-    const data = await res.json();
-    
-    data.forEach(item => {
-      const sym = item.symbol.replace('USDT', '');
-      binancePrices[sym] = {
-        bid: parseFloat(item.bidPrice),
-        ask: parseFloat(item.askPrice)
-      };
-    });
-    binanceLastFetch = Date.now();
+    // OKX toplu ticker endpoint
+    const requests = CONFIG.symbols.map(s =>
+      fetch(`https://www.okx.com/api/v5/market/ticker?instId=${s}-USDT`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.data && data.data.length > 0) {
+            const item = data.data[0];
+            okxPrices[s] = {
+              bid: parseFloat(item.bidPx),
+              ask: parseFloat(item.askPx)
+            };
+          }
+        })
+        .catch(() => {})
+    );
+    await Promise.all(requests);
+    okxLastFetch = Date.now();
   } catch (e) {
-    console.error('Binance hatası:', e.message);
+    console.error('OKX hatası:', e.message);
   }
 }
 
@@ -331,7 +335,7 @@ function checkArbitrageInstant() {
     CONFIG.symbols.forEach(sym => {
       const btcturkMarket = `${sym}TRY`;
       const cached = streamCache.get(btcturkMarket);
-      const binance = binancePrices[sym];
+      const binance = okxPrices[sym];
       
       if (!cached || !cached.bids || cached.bids.length === 0) return;
       if (!binance) return;
@@ -441,9 +445,9 @@ function checkArbitrageInstant() {
   }
 }
 
-// ===== YEDEK ARBİTRAJ KONTROLÜ (Binance güncelleme için) =====
+// ===== YEDEK ARBİTRAJ KONTROLÜ (OKX güncelleme için) =====
 async function checkArbitrage() {
-  await fetchBinancePrices();
+  await fetchOkxPrices();
   checkArbitrageInstant();
 }
 
@@ -625,7 +629,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   // WebSocket bağlan
   connectWebSocket();
   
-  // ⚡⚡⚡ Binance güncelleme için yedek kontrol (10ms)
+  // ⚡⚡⚡ OKX güncelleme için yedek kontrol (10ms)
   setInterval(checkArbitrage, CONFIG.checkInterval);
   
   console.log('📊 7/24 istatistik kaydı aktif!');
