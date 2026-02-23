@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Arbitraj Radarı ⚡ BtcTurk ⇄ Binance - Detaylı İstatistik</title>
+<title>Arbitraj Radarı ⚡ BtcTurk ⇄ OKX - Detaylı İstatistik</title>
 <style>
   .theme-dark{
     --bg:#0b1220; --panel:#111a2b; --panel2:#0f1626; --text:#e6edf6;
@@ -124,10 +124,10 @@
 <body>
 <header>
   <div>
-    <h1>Arbitraj Radarı ⚡ BtcTurk ⇄ Binance <span class="statusBadge" id="wsStatus">BAĞLANIYOR</span></h1>
+    <h1>Arbitraj Radarı ⚡ BtcTurk ⇄ OKX <span class="statusBadge" id="wsStatus">BAĞLANIYOR</span></h1>
     <div class="sub">
       USDT→TRY: <span id="usdtry" class="mono">—</span>
-      · BTCUSDT: <span id="btc" class="mono">—</span>
+      · BTC/USDT: <span id="btc" class="mono">—</span>
       · Toplam Sinyal: <span id="signalCount" class="mono" style="color:#f59e0b;font-weight:700">0</span>
       · Aktif Fark: <span id="activeCount" class="mono" style="color:#22c55e;font-weight:700">0</span>
     </div>
@@ -523,8 +523,8 @@ async function tick(){
     const timeNow = Date.now();
     const syms = Array.from(watched);
     
-    // Paralel istekler - USDT, Binance ve BtcTurk aynı anda
-    const [usdtResult, binanceResult, btcturkResult] = await Promise.all([
+    // Paralel istekler - USDT, OKX ve BtcTurk aynı anda
+    const [usdtResult, okxResult, btcturkResult] = await Promise.all([
       // USDT/TRY (sadece cache süresi dolmuşsa)
       (!usdtry || (timeNow - lastUsdtUpdate) > USDT_CACHE_MS) 
         ? Promise.race([
@@ -533,11 +533,13 @@ async function tick(){
           ]).catch(() => null)
         : Promise.resolve(null),
       
-      // Binance batch ticker
-      fetch('https://api.binance.com/api/v3/ticker/bookTicker?symbols=' + 
-        encodeURIComponent(JSON.stringify(syms.map(s => s + 'USDT'))), {cache:'no-store'})
-        .then(r => r.json())
-        .catch(() => []),
+      // OKX batch ticker
+      Promise.all(syms.map(s =>
+        fetch(`https://www.okx.com/api/v5/market/ticker?instId=${s}-USDT`, {cache:'no-store'})
+          .then(r => r.json())
+          .then(d => (d.data && d.data.length > 0) ? d.data[0] : null)
+          .catch(() => null)
+      )),
       
       // BtcTurk batch orderbook
       fetch(PROXY_URL + '/api/btcturk/batch', {
@@ -554,10 +556,14 @@ async function tick(){
       elUsd.textContent = usdtry.toFixed(2);
     }
     
-    // Binance map
-    const binanceMap = new Map((binanceResult || []).map(t => [t.symbol.replace('USDT',''), t]));
-    if(binanceMap.has('BTC')){
-      elBtc.textContent = '$' + parseFloat(binanceMap.get('BTC').bidPrice).toLocaleString('en-US',{maximumFractionDigits:0});
+    // OKX map
+    const okxMap = new Map();
+    (okxResult || []).forEach((item, i) => {
+      if (item) okxMap.set(syms[i], item);
+    });
+    if(okxMap.has('BTC')){
+      const btcItem = okxMap.get('BTC');
+      elBtc.textContent = '$' + parseFloat(btcItem.bidPx).toLocaleString('en-US',{maximumFractionDigits:0});
     }
 
     // BtcTurk map
@@ -575,7 +581,7 @@ async function tick(){
     const currentActive = new Set();
 
     const jobs = syms.map(sym => {
-      const bData = binanceMap.get(sym);
+      const bData = okxMap.get(sym);
       const pInfo = pMap.get(sym);
       
       if(!bData || !pInfo || !pInfo.data) return null;
@@ -592,8 +598,8 @@ async function tick(){
         askQty: parseFloat(pData.asks[0][1])
       };
 
-      const bBidTL = parseFloat(bData.bidPrice) * mul;
-      const bAskTL = parseFloat(bData.askPrice) * mul;
+      const bBidTL = parseFloat(bData.bidPx) * mul;
+      const bAskTL = parseFloat(bData.askPx) * mul;
 
       const diff1 = pBest.bid - bAskTL;
       const diff2 = bBidTL - pBest.ask;
@@ -603,20 +609,18 @@ async function tick(){
       if((diff1>0 || diff2>0) && isFinite(bBidTL) && isFinite(bAskTL)){
         show = true;
         if(diff1 > diff2){
-          // BtcTurk SATIŞ (BtcTurk'ta sat, Binance'dan al)
-          // Sol taraf (bid/yeşil) = alıcılara satıyoruz
+          // BtcTurk SATIŞ (BtcTurk'ta sat, OKX'den al)
           pct = (diff1 / bAskTL) * 100;
-          low = bAskTL; high = pBest.bid; lowSrc='Binance'; highSrc='BtcTurk';
+          low = bAskTL; high = pBest.bid; lowSrc='OKX'; highSrc='BtcTurk';
           btcturkSide = 'sell';
-          qty = pBest.bidQty;  // SOL taraf (yeşil/alış emirleri)
+          qty = pBest.bidQty;
           value = pBest.bid * pBest.bidQty;
         }else{
-          // BtcTurk ALIŞ (BtcTurk'tan al, Binance'a sat)
-          // Sağ taraf (ask/kırmızı) = satıcılardan alıyoruz
+          // BtcTurk ALIŞ (BtcTurk'tan al, OKX'e sat)
           pct = (diff2 / pBest.ask) * 100;
-          low = pBest.ask; high = bBidTL; lowSrc='BtcTurk'; highSrc='Binance';
+          low = pBest.ask; high = bBidTL; lowSrc='BtcTurk'; highSrc='OKX';
           btcturkSide = 'buy';
-          qty = pBest.askQty;  // SAĞ taraf (kırmızı/satış emirleri)
+          qty = pBest.askQty;
           value = pBest.ask * pBest.askQty;
         }
         
@@ -715,7 +719,7 @@ function draw(rows){
     const tdL = document.createElement('td'); 
     tdL.className='mono alCell';
     tdL.textContent = fmt4(r.low);
-    tdL.style.background = (r.lowSrc==='Binance') ? '#f97316' : '#0891b2';
+    tdL.style.background = (r.lowSrc==='OKX') ? '#f97316' : '#0891b2';
     tdL.style.color = '#fff';
     tdL.style.borderRadius = '6px';
     tr.appendChild(tdL);
@@ -762,7 +766,7 @@ function draw(rows){
     tdD.className = 'mono depthCell';
     if (r.btcturkSide === 'sell') {
       // BtcTurk satış - yeşil
-      tdD.innerHTML = `<span style="color:#22c55e;font-weight:700">SAT</span>`;
+      tdD.innerHTML = `<span style="color:#22c55e;font-weight:700">SAT</span>`; // BtcTurk SAT / OKX AL
     } else {
       // BtcTurk alış - kırmızı
       tdD.innerHTML = `<span style="color:#ef4444;font-weight:700">AL</span>`;
@@ -1142,7 +1146,7 @@ setInterval(()=>{ if(watched.size===0) elLast.textContent = nowStr(); }, 1000);
 
 console.log('⚡⚡⚡ GERÇEK MAKSİMUM HIZ MOD - Aktif!');
 console.log(`📊 ${statsThreshold}% üstü farklar: miktar, TL değer, süre kaydediliyor`);
-console.log('🚀 Frontend: 10ms minimum yenileme destekleniyor!');
+console.log('🚀 Frontend: OKX Global entegrasyonu aktif!');
 </script>
 </body>
 </html>
